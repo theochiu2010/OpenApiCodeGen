@@ -7,7 +7,7 @@ import org.springframework.stereotype.Service
 import java.math.BigDecimal
 
 @Service
-open class NRSApiClient {
+class NRSApiClient {
     @Value("\${contracts.nrs.baseUrl}")
     private lateinit var nrsBaseUrl: String
 

@@ -2,8 +2,6 @@ package com.ikigai.openApiCodeGenGrade.consumer
 
 import com.ikigai.openApiCodeGenGrade.consumer.client.NRSApiClient
 import org.openapitools.client.models.InlineResponse200
-import org.openapitools.ikigai.api.PublicAPIsApi
-import org.openapitools.model.Planet
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity

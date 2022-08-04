@@ -77,57 +77,37 @@ tasks.register<OpenApiContractDownloadTask>("downloadContract") {
     )
 }
 
-tasks.register("downloadServerContract", Download::class) {
-    var url = properties["url"].toString()
-
-    if (url != null) {
-        var pathComponents = url.split("/")
-        var fileName = pathComponents[pathComponents.size - 2]
-        this.src(url)
-        this.dest(File("src/main/resources/static/", "server-$fileName.yaml"))
-    }
-}
-
-tasks.register("downloadClientContract", Download::class) {
-    var url = properties["url"].toString()
-
-    if (url != null) {
-        var pathComponents = url.split("/")
-        var fileName = pathComponents[pathComponents.size - 2]
-        this.src(url)
-        this.dest(File("src/main/resources/static/", "client-$fileName.yaml"))
-    }
-}
-
 tasks.register<OpenApiContractCodeGenTask>("generateContract") {
     dependsOn("downloadContract")
     outputDir = "$buildDir/kotlin"
 }
 
-tasks.register("buildKotlinClient", GenerateTask::class) {
-    val url = properties["url"].toString()
-    if (url != null) {
-        var urlParts = url.split("/")
-        var fileName = urlParts[urlParts.size - 1].substringAfter("-").substringBefore(".")
-
-        generatorName.set("kotlin")
-        inputSpec.set("$url")
-        outputDir.set("$buildDir/kotlin")
-        apiPackage.set("org.openapitools.ikigai.api")
-        configOptions.put("serializationLibrary", "gson")
-//        configOptions.put("packageName", "org.openapitools.client.$fileName")
-    }
-}
-
-tasks.register("buildKotlinServer", GenerateTask::class) {
-    val url = properties["url"]
-    if (url != null) {
-        generatorName.set("kotlin-spring")
-        inputSpec.set("$url")
-        outputDir.set("$buildDir/kotlin")
+tasks.register("buildKotlinContractCode", GenerateTask::class) {
+    val yamlFilePath = properties["url"].toString()
+    val typeOfGenerator = properties["type"].toString()
+    val parsedGeneratorName = if (typeOfGenerator == "client") "kotlin" else "kotlin-spring"
+    if (yamlFilePath.isNotEmpty()) {
+        generatorName.set(parsedGeneratorName)
+        inputSpec.set("$yamlFilePath")
+        outputDir.set("${project.buildDir}/kotlin")
         apiPackage.set("org.openapitools.ikigai.api")
         configOptions.put("interfaceOnly", "true")
         configOptions.put("serializationLibrary", "gson")
+    }
+}
+
+tasks.register("downloadOpenApiContract", Download::class) {
+    var downloadFileUrl = properties["url"].toString()
+    var downloadOpenApiType = properties["type"].toString()
+
+    if (downloadFileUrl.isNotEmpty()) {
+        var fileName = downloadFileUrl.substringBefore(".yaml").substringAfter("/")
+        this.src(downloadFileUrl)
+        if (downloadOpenApiType == "client") {
+            this.dest(File("src/main/resources/static/", "client-$fileName.yaml"))
+        } else {
+            this.dest(File("src/main/resources/static/", "server-$fileName.yaml"))
+        }
     }
 }
 
@@ -139,34 +119,35 @@ abstract class OpenApiContractDownloadTask @Inject constructor() : DefaultTask()
     lateinit var consumers: List<String>
 
     private val GRADLEW_EXECUTABLE = "./gradlew"
-    private val DOWNLOAD_SERVER_CONTRACT = "downloadServerContract"
-    private val DOWNLOAD_CLIENT_CONTRACT = "downloadClientContract"
-    private val PARAMETER = "-Purl="
+    private val DOWNLOAD_OPENAPI_CONTRACT = "downloadOpenApiContract"
+    private val PARAMETER = "-P"
     private val ROOT = "https://raw.githubusercontent.com/theochiu2010/OpenApiContracts/main/contracts/"
 
     @TaskAction
     fun doWork() {
-        var downloadProgresses = mutableListOf<Process>()
+        var downloadProcesses = mutableListOf<Process>()
 
         try {
             producers.forEach {
-                val command = "$GRADLEW_EXECUTABLE $DOWNLOAD_SERVER_CONTRACT $PARAMETER"
                 val url = constructUrl(it)
                 println("Downloading producer OpenAPI from url: $url")
-                var progress = Runtime.getRuntime().exec("$command$url")
-                downloadProgresses.add(progress)
+                val command = "$GRADLEW_EXECUTABLE $DOWNLOAD_OPENAPI_CONTRACT ${PARAMETER}url=$url ${PARAMETER}type=server"
+
+                var process = Runtime.getRuntime().exec("$command")
+                downloadProcesses.add(process)
             }
 
             consumers.forEach {
-                val command = "$GRADLEW_EXECUTABLE $DOWNLOAD_CLIENT_CONTRACT $PARAMETER"
                 val url = constructUrl(it)
                 println("Downloading consumer OpenAPI from url: $url")
-                var progress = Runtime.getRuntime().exec("$command$url")
-                downloadProgresses.add(progress)
+                val command = "$GRADLEW_EXECUTABLE $DOWNLOAD_OPENAPI_CONTRACT ${PARAMETER}url=$url ${PARAMETER}type=client"
+
+                var process = Runtime.getRuntime().exec("$command")
+                downloadProcesses.add(process)
             }
 
-            while(downloadProgresses.any { x -> x.isAlive }) {
-                Thread.sleep(250)
+            while(downloadProcesses.any { x -> x.isAlive }) {
+                Thread.sleep(100)
                 // wait until download finishes
             }
         } catch (e: RuntimeException) {
@@ -174,7 +155,7 @@ abstract class OpenApiContractDownloadTask @Inject constructor() : DefaultTask()
         }
     }
 
-    fun constructUrl(url: String): String {
+    private fun constructUrl(url: String): String {
         var urlParts = url.split(":")
         var boundedContext = urlParts[0]
         var apiName = urlParts[1]
@@ -189,14 +170,13 @@ abstract class OpenApiContractCodeGenTask @Inject constructor() : DefaultTask() 
     lateinit var outputDir: String
 
     private val GRADLEW_EXECUTABLE = "./gradlew"
-    private val BUILD_CLIENT = "buildKotlinClient"
-    private val BUILD_SERVER = "buildKotlinServer"
-    private val PARAMETER = "-Purl="
+    private val BUILD_CONTRACT_CODE = "buildKotlinContractCode"
+    private val PARAMETER = "-P"
 
     @TaskAction
     fun doWork() {
         try {
-            var downloadProgresses = mutableListOf<Process>()
+            var downloadProcesses = mutableListOf<Process>()
             var openApiContracts = mutableMapOf<String, String>()
             var dir = File("src/main/resources/static/")
 
@@ -213,20 +193,20 @@ abstract class OpenApiContractCodeGenTask @Inject constructor() : DefaultTask() 
             openApiContracts.forEach {
                 if (it.key.contains("client-")) {
                     println("Generating Client Code: ${it.key}")
-                    val genCodeCommand = "$GRADLEW_EXECUTABLE $BUILD_CLIENT -Purl=${it.value}"
+                    val genCodeCommand = "$GRADLEW_EXECUTABLE $BUILD_CONTRACT_CODE ${PARAMETER}url=${it.value} ${PARAMETER}type=client"
 
-                    val progress = Runtime.getRuntime().exec("$genCodeCommand")
-                    downloadProgresses.add(progress)
+                    val process = Runtime.getRuntime().exec("$genCodeCommand")
+                    downloadProcesses.add(process)
                 } else {
                     println("Generating Server Code: ${it.key}")
-                    val genCodeCommand = "$GRADLEW_EXECUTABLE $BUILD_SERVER -Purl=${it.value}"
+                    val genCodeCommand = "$GRADLEW_EXECUTABLE $BUILD_CONTRACT_CODE ${PARAMETER}url=${it.value} ${PARAMETER}type=server"
 
-                    val progress = Runtime.getRuntime().exec("$genCodeCommand")
-                    downloadProgresses.add(progress)
+                    val process = Runtime.getRuntime().exec("$genCodeCommand")
+                    downloadProcesses.add(process)
                 }
             }
 
-            while(downloadProgresses.any { x -> x.isAlive }) {
+            while(downloadProcesses.any { x -> x.isAlive }) {
                 Thread.sleep(250)
                 // wait until download finishes
             }
